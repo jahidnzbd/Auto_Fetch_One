@@ -1,0 +1,175 @@
+name: Fetch Ayna OTT Channels
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 */1 * * *' # Run every 1 hour
+
+permissions:
+  contents: write
+
+env:
+  WORKFLOW_TIMEOUT: 900
+
+jobs:
+  fetch_channels_job:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    
+    steps:
+    - name: ⬇️ Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 1
+
+    - name: 🐍 Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.x'
+
+    - name: ⚡ Cache pip
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+
+    - name: 📦 Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+      continue-on-error: true
+
+    - name: 🏃 Run channel fetch script with retries
+      id: fetch_script
+      env:
+        AYNA_OTT_EMAIL: ${{ secrets.AYNA_OTT_EMAIL }}
+        AYNA_OTT_PASSWORD: ${{ secrets.AYNA_OTT_PASSWORD }}
+        LOGIN_DEVICE_ID: ${{ secrets.LOGIN_DEVICE_ID }}
+        SOCKS5_PROXY_HOST: ${{ secrets.SOCKS5_PROXY_HOST }}
+        SOCKS5_PROXY_PORT: ${{ secrets.SOCKS5_PROXY_PORT }}
+        SOCKS5_PROXY_USER: ${{ secrets.SOCKS5_PROXY_USER }}
+        SOCKS5_PROXY_PASS: ${{ secrets.SOCKS5_PROXY_PASS }}
+      run: |
+        MAX_ATTEMPTS=3
+        ATTEMPT=1
+        
+        while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
+          echo "🔄 Attempt $ATTEMPT of $MAX_ATTEMPTS"
+          if python fetch_channels.py; then
+            echo "✅ Script executed successfully on attempt $ATTEMPT"
+            exit 0
+          else
+            EXIT_CODE=$?
+            echo "⚠️ Script failed with exit code $EXIT_CODE on attempt $ATTEMPT"
+            if [ $ATTEMPT -lt $MAX_ATTEMPTS ]; then
+              echo "⏳ Waiting 10 seconds before retry..."
+              sleep 10
+            fi
+            ATTEMPT=$((ATTEMPT + 1))
+          fi
+        done
+        
+        echo "❌ All $MAX_ATTEMPTS attempts failed"
+        exit 1
+      continue-on-error: true
+
+    - name: ✅ Verify output file exists
+      id: verify_output
+      run: |
+        if [ -f "output.json" ]; then
+          echo "status=success" >> $GITHUB_OUTPUT
+          echo "✅ output.json exists - $(wc -c < output.json) bytes"
+          python -c "import json; data = json.load(open('output.json')); print(f\"Last updated: {data.get('last_updated', 'N/A')}\"); print(f\"Channels count: {len(data.get('channels', []))}\")" || true
+        else
+          echo "status=not_found" >> $GITHUB_OUTPUT
+          echo "❌ ERROR: output.json not found - fetch completely failed!"
+          exit 1
+        fi
+      continue-on-error: true
+
+    - name: 📊 Upload execution status
+      id: upload_status
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: fetch-status-${{ github.run_number }}
+        path: |
+          fetch_status.json
+          output.json
+        retention-days: 7
+      continue-on-error: true
+
+    - name: ⬆️ Upload output.json as an Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ayna-ott-channels-${{ github.sha }}
+        path: output.json
+        retention-days: 7
+      continue-on-error: true
+
+    - name: 📝 Commit and push changes (non-blocking)
+      id: push_changes
+      if: always()
+      run: |
+        git config --local user.email "github-actions[bot]@users.noreply.github.com"
+        git config --local user.name "github-actions[bot]"
+        
+        if git diff --quiet HEAD -- output.json; then
+          echo "ℹ️ No changes to output.json to commit"
+          echo "changes=false" >> $GITHUB_OUTPUT
+        else
+          echo "📝 Changes detected, committing..."
+          git add output.json
+          TIMESTAMP=$(date -u +'%Y-%m-%d %H:%M:%S UTC')
+          git commit -m "Update channels data [auto-fetch] $TIMESTAMP"
+          git push origin HEAD:main 2>&1 || echo "⚠️ Git push encountered an issue (non-blocking)"
+          echo "changes=true" >> $GITHUB_OUTPUT
+        fi
+      continue-on-error: true
+
+    - name: 🔔 Report Job Status
+      if: always()
+      run: |
+        echo "📋 WORKFLOW EXECUTION SUMMARY"
+        echo "=============================="
+        echo "Fetch Script Status: ${{ steps.fetch_script.outcome }}"
+        echo "Output Verification: ${{ steps.verify_output.outputs.status }}"
+        echo "Git Push Status: ${{ steps.push_changes.outputs.changes }}"
+        echo ""
+        
+        if [ -f "fetch_status.json" ]; then
+          echo "📊 Fetch Status Details:"
+          cat fetch_status.json
+        fi
+      continue-on-error: true
+
+    - name: 🚨 Final Status Check
+      if: always()
+      env:
+        FETCH_OUTCOME: ${{ steps.fetch_script.outcome }}
+        VERIFY_STATUS: ${{ steps.verify_output.outputs.status }}
+      run: |
+        if [ "$FETCH_OUTCOME" = "failure" ]; then
+          echo "❌ CRITICAL: Fetch script failed after all retries!"
+          echo "⚠️ NOT using stale fallback data - URLs and tokens are expired!"
+          echo ""
+          echo "Next steps:"
+          echo "1. Check GitHub Actions logs for detailed error messages"
+          echo "2. Verify API endpoint is accessible"
+          echo "3. Verify credentials (AYNA_OTT_EMAIL, AYNA_OTT_PASSWORD)"
+          echo "4. Check network/proxy connectivity"
+          echo "5. Manually trigger workflow after fixing issues"
+          echo ""
+          exit 1
+        fi
+        
+        if [ "$VERIFY_STATUS" != "success" ]; then
+          echo "❌ CRITICAL: output.json verification failed!"
+          exit 1
+        fi
+        
+        echo "✅ Workflow completed successfully with fresh data"
+        exit 0
+      continue-on-error: false

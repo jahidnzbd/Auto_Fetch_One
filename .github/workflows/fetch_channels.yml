@@ -1,16 +1,16 @@
-name: Generate Ayna Playlist
+name: Generate Fast Ayna Playlist
 
 on:
   schedule:
-    # Runs every 6 hours (adjust as needed)
-    - cron: '0 */6 * * *'
-  workflow_dispatch: # Allows you to run this manually from the Actions tab
+    # Run every 1 hour to keep tokens fresh for fast opening
+    - cron: '0 * * * *'
+  workflow_dispatch: # Allows manual trigger
 
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # Essential for committing the new file
+      contents: write
 
     steps:
       - name: Checkout repository
@@ -32,8 +32,12 @@ jobs:
           import requests
           import json
 
-          # The URL of the JSON file
+          # Source URL
           url = "https://raw.githubusercontent.com/devmujahidul/Auto_Fetch/refs/heads/main/output.json"
+
+          # Headers to help streams open faster (simulate a real browser)
+          user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+          referrer = "https://aynaott.com/"
 
           try:
               print(f"Fetching JSON from {url}...")
@@ -41,26 +45,30 @@ jobs:
               response.raise_for_status()
               data = response.json()
 
-              print("Generating M3U playlist...")
+              print("Generating optimized M3U playlist...")
               with open("ayna.m3u", "w", encoding="utf-8") as f:
-                  f.write("#EXTM3U\n\n")
+                  f.write("#EXTM3U\n")
+                  f.write("#PLAYLIST: Ayna OTT (Fast Open)\n\n")
                   
-                  # Loop through channels in the JSON
                   for channel in data.get("channels", []):
                       c_id = channel.get("id", "")
                       c_name = channel.get("title", "Unknown Channel")
-                      # Use "image" first, fallback to "logo", or empty string
                       c_logo = channel.get("image") or channel.get("logo") or ""
                       c_url = channel.get("url", "")
 
-                      # Only add if a URL exists
                       if c_url:
-                          # Write the EXTINF line
-                          f.write(f"#EXTINF:-1 tvg-id=\"{c_id}\" tvg-name=\"{c_name}\" tvg-logo=\"{c_logo}\",{c_name}\n")
-                          # Write the URL line
-                          f.write(f"{c_url}\n\n")
+                          # Standard EXTINF info
+                          f.write(f'#EXTINF:-1 tvg-id="{c_id}" tvg-logo="{c_logo}",{c_name}\n')
+                          
+                          # Optimization: Add headers for players that support them (VLC, Tivimate, etc.)
+                          f.write(f'#EXTVLCOPT:http-user-agent={user_agent}\n')
+                          f.write(f'#EXTVLCOPT:http-referrer={referrer}\n')
+                          f.write(f'#EXTHTTP:{"User-Agent": "{user_agent}"}\n')
+                          
+                          # The Stream URL
+                          f.write(f'{c_url}\n\n')
               
-              print("ayna.m3u created successfully.")
+              print("ayna.m3u created successfully with optimization headers.")
 
           except Exception as e:
               print(f"Error occurred: {e}")
@@ -72,10 +80,9 @@ jobs:
           git config --global user.name "GitHub Actions"
           git config --global user.email "actions@github.com"
           git add ayna.m3u
-          # Check if there are any changes to commit
           if git diff --staged --quiet; then
             echo "No changes detected. Skipping commit."
           else
-            git commit -m "Auto-update ayna.m3u playlist"
+            git commit -m "Update fast-open playlist"
             git push
           fi

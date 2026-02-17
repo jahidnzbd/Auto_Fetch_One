@@ -2,9 +2,9 @@ name: Generate Fast Ayna Playlist
 
 on:
   schedule:
-    # Run every 1 hour to keep tokens fresh for fast opening
+    # Runs every 1 hour to keep tokens fresh
     - cron: '0 * * * *'
-  workflow_dispatch: # Allows manual trigger
+  workflow_dispatch: # Allows you to run manually
 
 jobs:
   build:
@@ -26,16 +26,17 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests
 
-      - name: Generate ayna.m3u
+      - name: Create and Run Generator Script
         run: |
-          python -c '
+          # We write the python code to a file named 'generator.py' to avoid quote errors
+          cat << 'EOF' > generator.py
           import requests
           import json
 
           # Source URL
           url = "https://raw.githubusercontent.com/devmujahidul/Auto_Fetch/refs/heads/main/output.json"
 
-          # Headers to help streams open faster (simulate a real browser)
+          # Headers to help streams open faster (Satellite Mode)
           user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
           referrer = "https://aynaott.com/"
 
@@ -57,23 +58,26 @@ jobs:
                       c_url = channel.get("url", "")
 
                       if c_url:
-                          # Standard EXTINF info
+                          # Write the standard info
                           f.write(f'#EXTINF:-1 tvg-id="{c_id}" tvg-logo="{c_logo}",{c_name}\n')
                           
-                          # Optimization: Add headers for players that support them (VLC, Tivimate, etc.)
+                          # FAST OPEN HEADERS (Vital for satellite speed)
                           f.write(f'#EXTVLCOPT:http-user-agent={user_agent}\n')
                           f.write(f'#EXTVLCOPT:http-referrer={referrer}\n')
-                          f.write(f'#EXTHTTP:{"User-Agent": "{user_agent}"}\n')
+                          f.write(f'#EXTHTTP:{{"User-Agent": "{user_agent}"}}\n')
                           
-                          # The Stream URL
+                          # Write the URL
                           f.write(f'{c_url}\n\n')
               
-              print("ayna.m3u created successfully with optimization headers.")
+              print("ayna.m3u created successfully.")
 
           except Exception as e:
               print(f"Error occurred: {e}")
               exit(1)
-          '
+          EOF
+
+          # Now we run the script we just created
+          python generator.py
 
       - name: Commit and Push changes
         run: |
@@ -83,6 +87,6 @@ jobs:
           if git diff --staged --quiet; then
             echo "No changes detected. Skipping commit."
           else
-            git commit -m "Update fast-open playlist"
+            git commit -m "Auto-update fast playlist"
             git push
           fi

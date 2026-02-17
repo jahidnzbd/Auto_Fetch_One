@@ -1,16 +1,16 @@
-name: Generate Fast Ayna Playlist
+name: Generate Ayna Playlist
 
 on:
   schedule:
-    # Runs every 1 hour to keep tokens fresh
-    - cron: '0 * * * *'
-  workflow_dispatch: # Allows you to run manually
+    # Runs every 6 hours (adjust as needed)
+    - cron: '0/30 * * * *'
+  workflow_dispatch: # Allows you to run this manually from the Actions tab
 
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: write # Essential for committing the new file
 
     steps:
       - name: Checkout repository
@@ -26,19 +26,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests
 
-      - name: Create and Run Generator Script
+      - name: Generate ayna.m3u
         run: |
-          # We write the python code to a file named 'generator.py' to avoid quote errors
-          cat << 'EOF' > generator.py
+          python -c '
           import requests
           import json
 
-          # Source URL
+          # The URL of the JSON file
           url = "https://raw.githubusercontent.com/devmujahidul/Auto_Fetch/refs/heads/main/output.json"
-
-          # Headers to help streams open faster (Satellite Mode)
-          user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-          referrer = "https://aynaott.com/"
 
           try:
               print(f"Fetching JSON from {url}...")
@@ -46,47 +41,41 @@ jobs:
               response.raise_for_status()
               data = response.json()
 
-              print("Generating optimized M3U playlist...")
+              print("Generating M3U playlist...")
               with open("ayna.m3u", "w", encoding="utf-8") as f:
-                  f.write("#EXTM3U\n")
-                  f.write("#PLAYLIST: Ayna OTT (Fast Open)\n\n")
+                  f.write("#EXTM3U\n\n")
                   
+                  # Loop through channels in the JSON
                   for channel in data.get("channels", []):
                       c_id = channel.get("id", "")
                       c_name = channel.get("title", "Unknown Channel")
+                      # Use "image" first, fallback to "logo", or empty string
                       c_logo = channel.get("image") or channel.get("logo") or ""
                       c_url = channel.get("url", "")
 
+                      # Only add if a URL exists
                       if c_url:
-                          # Write the standard info
-                          f.write(f'#EXTINF:-1 tvg-id="{c_id}" tvg-logo="{c_logo}",{c_name}\n')
-                          
-                          # FAST OPEN HEADERS (Vital for satellite speed)
-                          f.write(f'#EXTVLCOPT:http-user-agent={user_agent}\n')
-                          f.write(f'#EXTVLCOPT:http-referrer={referrer}\n')
-                          f.write(f'#EXTHTTP:{{"User-Agent": "{user_agent}"}}\n')
-                          
-                          # Write the URL
-                          f.write(f'{c_url}\n\n')
+                          # Write the EXTINF line
+                          f.write(f"#EXTINF:-1 tvg-id=\"{c_id}\" tvg-name=\"{c_name}\" tvg-logo=\"{c_logo}\",{c_name}\n")
+                          # Write the URL line
+                          f.write(f"{c_url}\n\n")
               
               print("ayna.m3u created successfully.")
 
           except Exception as e:
               print(f"Error occurred: {e}")
               exit(1)
-          EOF
-
-          # Now we run the script we just created
-          python generator.py
+          '
 
       - name: Commit and Push changes
         run: |
           git config --global user.name "GitHub Actions"
           git config --global user.email "actions@github.com"
           git add ayna.m3u
+          # Check if there are any changes to commit
           if git diff --staged --quiet; then
             echo "No changes detected. Skipping commit."
           else
-            git commit -m "Auto-update fast playlist"
+            git commit -m "Auto-update ayna.m3u playlist"
             git push
           fi
